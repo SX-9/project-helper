@@ -1,9 +1,9 @@
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 
-const { TOKEN, CLIENT_ID } = process.env;
-if (!TOKEN || !CLIENT_ID) {
-  console.error('Missing environment variables: TOKEN or CLIENT_ID');
+const { DC_TOKEN, CLIENT_ID } = process.env;
+if (!DC_TOKEN || !CLIENT_ID) {
+  console.error('Missing environment variables');
   process.exit(1);
 }
 
@@ -106,7 +106,7 @@ const commands = [
   },
 ];
 
-const rest = new REST({ version: '10' }).setToken(TOKEN);
+const rest = new REST({ version: '10' }).setToken(DC_TOKEN);
 
 try {
   console.log('Started refreshing application (/) commands.');
