@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+
+    {
+      "type": "bun",
+      "request": "launch",
+      "name": "Launch index.ts with Bun",
+      "program": "${workspaceFolder}/${input:entryFile}",
+    }
+  ],
+  "inputs": [
+    {
+      "id": "entryFile",
+      "type": "pickString",
+      "description": "Select the entry point to debug",
+      "options": [
+        "index.ts",
+        "init.ts"
+      ]
+    }
+  ]
+}
