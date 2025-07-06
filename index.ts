@@ -145,6 +145,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
       break;
+
+    case "repo":
+      await interaction.deferReply();
+
+      let repoName = '';
+      try {
+        const serverSettings = await collection.findOne({ serverId });
+        repoName = serverSettings?.defaultRepo || process.env?.DEFAULT_REPO || 'SX-9/project-helper';
+      } catch (error) {
+        console.error(error);
+      }
+      if (options.getString('repository')) repoName = options.getString('repository', true);
+      
+      try {
+        const [owner, repo] = repoName.split('/');
+        if (!owner || !repo) {
+          responseEmbed.setDescription(`Invalid repository format: ${repoName}. Expected "owner/repo".`);
+        } else {
+          const { data } = await github.rest.repos.get({ owner, repo });
+          responseEmbed
+            .setTitle(data.full_name)
+            .setURL(data.html_url)
+            .setDescription(`${data.description || '_No description._'}\n\n**${data.stargazers_count}** stars- **${data.forks_count}** forks - **${data.open_issues_count}** issues`)
+            .setThumbnail(data.owner.avatar_url);
+        }
+      } catch (error) {
+        console.error(error);
+        return await interaction.editReply({
+          embeds: [responseEmbed.setDescription(`Repository ${repoName} not found on GitHub.`)],
+        });
+      }
+      break;
   }
   
   await interaction.editReply({
