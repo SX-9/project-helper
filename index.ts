@@ -1,6 +1,7 @@
 import { ActionRowBuilder, ActivityType, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, PresenceUpdateStatus } from "discord.js";
 import { Octokit } from "octokit";
 import { MongoClient } from "mongodb";
+import { isTemplateExpression } from "typescript";
 
 const { GH_TOKEN, DC_TOKEN, MONGODB_URI } = process.env;
 if (!GH_TOKEN || !DC_TOKEN || !MONGODB_URI) {
@@ -58,7 +59,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         responseEmbed.setDescription(`Default repository set to **${defaultRepo}**.`);
       } catch (error) {
         console.error(error);
-        responseEmbed.setDescription(`Failed to set default repository: ${error}`);
+        responseEmbed
+          .setColor(0xD73A49)
+          .setDescription(`_Failed to set default repository: ${error}_`);
       }
       break;
       
@@ -81,7 +84,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         responseEmbed.setDescription(`Quick reference set to **${quickRefEnabled}**.`);
       } catch (error) {
         console.error(error);
-        responseEmbed.setDescription(`Failed to set quick reference: ${error}`);
+        responseEmbed
+          .setColor(0xD73A49)
+          .setDescription(`_Failed to set quick reference: ${error}_`);
       } 
       break;
 
@@ -102,7 +107,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } catch (error) {
         console.error(error);
-        responseEmbed.setDescription(`Failed to get settings: ${error}`);
+        responseEmbed
+          .setColor(0xD73A49) 
+          .setDescription(`_Failed to get settings: ${error}_`);
       }
       break;
 
@@ -172,9 +179,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } catch (error) {
         console.error(error);
-        return await interaction.editReply({
-          embeds: [responseEmbed.setDescription(`Repository ${repoName} not found on GitHub.`)],
-        });
+        responseEmbed.setDescription(`Repository ${repoName} not found on GitHub.`)
       }
       break;
     
@@ -199,21 +204,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
 
           if (Array.isArray(data)) {
-            const contents = data.sort((a, b) => {
-              if (a.type === b.type) return a.name.localeCompare(b.name);
-              if (a.type === 'dir') return -1;
-              if (b.type === 'dir') return 1;
-              return 0;
-            });
             const typeKV = {
               file: '📄',
               dir: '📁',
               submodule: '📤',
               symlink: '⛓️',
             };
+            let contents = data.sort((a, b) => {
+              if (a.type === b.type) return a.name.localeCompare(b.name);
+              if (a.type === 'dir') return -1;
+              if (b.type === 'dir') return 1;
+              return 0;
+            }).map(item => `${typeKV[item.type]} [${item.name}](${item.html_url})`).join('\n');
+            if (contents.length > 4096) contents = `Directory too big, +**${data.length}** amount of files`;
             responseEmbed
+              .setColor(0x0B0399)
               .setTitle(`Contents of \`${path}\`:`)
-              .setDescription(contents.map(item => `${typeKV[item.type]} [${item.name}](${item.html_url})`).join('\n') || '_No files found._');
+              .setDescription(contents || '_No files found._');
           } else if (data.type === 'file' && typeof data.content === 'string') {
             const contents = Buffer.from(data.content, 'base64').toString('utf-8');
             const extension = path.split('.').pop();
@@ -230,6 +237,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               .setTitle(`File: ${data.name}`)
               .setURL(data.html_url)
               .setDescription(description.length > 4096 ? '${header}_File content is too big to display._' : description)
+              .setColor(isImage ? 0xEED605 : 0xB6B6B6)
             if (isImage) responseEmbed.setImage(data.download_url);
           } else {
             responseEmbed.setDescription('_File content is not available to display or not a regular file._');
@@ -237,11 +245,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } catch (error) {
         console.error(error);
-        return await interaction.editReply({
-          embeds: [responseEmbed.setDescription(`File not found in repository ${repoName}.`)],
-        });
+        responseEmbed.setDescription(`File not found in repository ${repoName}.`)
       }
       break; 
+
+    case "pr":
+      await interaction.deferReply();
+
+      try {
+        const serverSettings = await collection.findOne({ serverId });
+        repoName = serverSettings?.defaultRepo || process.env?.DEFAULT_REPO || 'SX-9/project-helper';
+      } catch (error) {
+        console.error(error);
+      }
+      if (options.getString('repository')) repoName = options.getString('repository', true);
+
+      const prIssueNumber = options.getInteger('pr-issue-number', true);
+      const [owner, repo] = repoName.split('/');
+      if (!owner || !repo) {
+        responseEmbed.setDescription(`Invalid repository format: ${repoName}. Expected "owner/repo".`);
+        break;
+      }
+      try {
+        const { data } = await github.rest.issues.get({
+          owner, repo, issue_number: prIssueNumber,
+        });
+
+        if (!data) {
+          responseEmbed.setDescription(`PR/Issue #${prIssueNumber} not found in repository ${repoName}.`);
+        } else {
+          responseEmbed
+            .setTitle(`#${data.number} ${data.title}`)
+            .setURL(data.html_url)
+            .setAuthor({
+              name: data.user?.login || '',
+              iconURL: data.user?.avatar_url,
+              url: data.user?.html_url,
+            })
+            .setColor(data.state === 'open' ? 0x28A745 : 0xB23AD7)
+            .setDescription(`${data.body || '_No description._'}\n**${data.state}** - **${data.comments}** comments - **${data.reactions?.total_count}** reactions`)
+            .addFields(
+              { name: "Created At", value: `${new Date(data.created_at).toLocaleDateString()}`, inline: true },
+              { name: "Updated At", value: `${new Date(data.updated_at).toLocaleDateString()}`, inline: true }
+            );
+        }
+      } catch (error) {
+        console.error(error);
+        responseEmbed
+          .setColor(0xD73A49)
+          .setDescription(`_Failed to fetch PR/Issue #${prIssueNumber} from repository ${repoName}._`);
+      }
+      break;
   }
   
   await interaction.editReply({

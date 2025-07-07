@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { Options, REST, Routes } from 'discord.js';
 import { MongoClient } from 'mongodb';
-import { openInEditor } from 'bun';
 
 const { DC_TOKEN, CLIENT_ID, MONGODB_URI } = process.env;
 if (!DC_TOKEN || !CLIENT_ID || !MONGODB_URI) {
@@ -16,6 +15,10 @@ const db = mongo.db('project-helper');
 try {
   console.log('Started refreshing application (/) commands.');
   await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [
+    {
+      name: 'help',
+      description: 'Shows commands available in this server',
+    },
     {
       name: 'ping',
       description: 'Replies with Pong!',
@@ -87,6 +90,19 @@ try {
           name: 'file-path',
           description: 'The path to the file in the repository',
           required: true,
+          choices: [
+            {
+              name: 'Readme File',
+              value:'README.md',
+            },
+            {
+              name: 'Code License',
+              value: 'LICENSE',
+            },
+            {
+              name: 'Root Directory',
+              value: '.',
+            }, ],
         },
         {
           type: 3,
