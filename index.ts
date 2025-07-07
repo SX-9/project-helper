@@ -85,7 +85,7 @@ async function fileResponse(owner: string, repo: string, filePath: string, respo
     responseEmbed
       .setTitle(`File: ${data.name}`)
       .setURL(data.html_url)
-      .setDescription(description.length > 4096 ? '${header}_File content is too big to display._' : description)
+      .setDescription(description.length > 4096 ? `${header}_File content is too big to display._` : description)
       .setColor(isImage ? 0xEED605 : 0xB6B6B6);
     if (isImage) responseEmbed.setImage(data.download_url);
   } else {
