@@ -1,15 +1,3 @@
-# project-helper
+# Project Helper
 
-To install dependencies:
-
-```bash
-bun install
-```
-
-To run:
-
-```bash
-bun run 
-```
-
-This project was created using `bun init` in bun v1.2.17. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+A Discord bot to help with your GitHub project support server! Quickly reference PRs by number and files by path without copying links.
