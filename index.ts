@@ -1,7 +1,6 @@
-import { ActionRowBuilder, ActivityType, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, PresenceUpdateStatus } from "discord.js";
+import { ActivityType, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, PermissionsBitField, PresenceUpdateStatus } from "discord.js";
 import { Octokit } from "octokit";
 import { MongoClient } from "mongodb";
-import { isTemplateExpression } from "typescript";
 
 const { GH_TOKEN, DC_TOKEN, MONGODB_URI } = process.env;
 if (!GH_TOKEN || !DC_TOKEN || !MONGODB_URI) {
@@ -10,9 +9,89 @@ if (!GH_TOKEN || !DC_TOKEN || !MONGODB_URI) {
 }
 
 const github = new Octokit({ auth: GH_TOKEN });
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent,
+]});
 const mongo = await MongoClient.connect(MONGODB_URI);
 const collection = mongo.db('project-helper').collection('server_config');
+
+async function allowQuickRef(serverId: string): Promise<string> {
+  const settings = await collection.findOne({ serverId });
+  return settings?.quickRefEnabled ? settings.defaultRepo : '';
+}
+
+async function prIssueResponse(owner: string, repo: string, prIssueNumber: number, responseEmbed: EmbedBuilder) {
+  const { data } = await github.rest.issues.get({
+    owner, repo, issue_number: prIssueNumber,
+  });
+
+  if (!data) {
+    responseEmbed.setDescription(`PR/Issue #${prIssueNumber} not found.`);
+  } else {
+    responseEmbed
+      .setTitle(`#${data.number} ${data.title}`)
+      .setURL(data.html_url)
+      .setAuthor({
+        name: data.user?.login || '',
+        iconURL: data.user?.avatar_url,
+        url: data.user?.html_url,
+      })
+      .setColor(data.state === 'open' ? 0x28A745 : 0xB23AD7)
+      .setDescription(`${data.body || '_No description._'}\n**${data.state}** - **${data.comments}** comments - **${data.reactions?.total_count}** reactions`)
+      .addFields(
+        { name: "Created At", value: `${new Date(data.created_at).toLocaleDateString()}`, inline: true },
+        { name: "Updated At", value: `${new Date(data.updated_at).toLocaleDateString()}`, inline: true }
+      );
+  }
+}
+
+async function fileResponse(owner: string, repo: string, filePath: string, responseEmbed: EmbedBuilder) {
+  const { data } = await github.rest.repos.getContent({
+    owner, repo, path: filePath,
+  });
+
+  if (Array.isArray(data)) {
+    const typeKV = {
+      file: '📄',
+      dir: '📁',
+      submodule: '📤',
+      symlink: '⛓️',
+    };
+    let contents = data.sort((a, b) => {
+      if (a.type === b.type) return a.name.localeCompare(b.name);
+      if (a.type === 'dir') return -1;
+      if (b.type === 'dir') return 1;
+      return 0;
+    }).map(item => `${typeKV[item.type]} [${item.name}](${item.html_url})`).join('\n');
+    if (contents.length > 4096) contents = `Directory too big, +**${data.length}** amount of files`;
+    responseEmbed
+      .setColor(0x0B0399)
+      .setTitle(`Contents of \`${filePath}\`:`)
+      .setDescription(contents || '_No files found._');
+  } else if (data.type === 'file' && typeof data.content === 'string') {
+    const contents = Buffer.from(data.content, 'base64').toString('utf-8');
+    const extension = filePath.split('.').pop();
+    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension as string);
+    const header = `[Download](${data.download_url}) - ${data.size} bytes \n\n`;
+    const description = `${header}${data.content
+      ? extension == 'md'
+        ? `${contents}`
+        : `\`\`\`${extension}\n${contents}\n\`\`\``
+      : isImage ? '' : '_File content is not available to display or empty._'
+    }`;
+
+    responseEmbed
+      .setTitle(`File: ${data.name}`)
+      .setURL(data.html_url)
+      .setDescription(description.length > 4096 ? '${header}_File content is too big to display._' : description)
+      .setColor(isImage ? 0xEED605 : 0xB6B6B6);
+    if (isImage) responseEmbed.setImage(data.download_url);
+  } else {
+    responseEmbed.setDescription('_File content is not available to display or not a regular file._');
+  }
+}
 
 client.on(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}!`);
@@ -23,6 +102,57 @@ client.on(Events.ClientReady, async (readyClient) => {
     }],
     status: PresenceUpdateStatus.Idle
   });
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  const embed = new EmbedBuilder()
+  let qrRepo, owner, repo;
+
+  switch (message.content.slice(0, 2)) {
+    case '##':
+      qrRepo = await allowQuickRef(message.guildId || '');
+      if (!qrRepo) return;
+      [owner, repo] = qrRepo.split('/');
+
+      const prIssueNumber = (message.content.split(' ')[0] as string).slice(2);
+      if (!prIssueNumber || isNaN(Number(prIssueNumber))) return;
+      await message.channel.sendTyping();
+
+      try {
+        await prIssueResponse(owner as string, repo as string, parseInt(prIssueNumber), embed);
+        message.reply({
+          embeds: [embed],
+        });
+      } catch (error) {
+        console.error(error);
+        await message.author.send({
+          embeds: [embed.setColor(0xD73A49).setDescription(`_Failed to fetch PR/Issue #${prIssueNumber} from repository ${qrRepo}._`)],
+        });
+      }
+      break;
+    case '//':
+      qrRepo = await allowQuickRef(message.guildId || '');
+      if (!qrRepo) return;
+      [owner, repo] = qrRepo.split('/');
+
+      const filePath = (message.content.split(' ')[0] as string).slice(2);
+      if (!filePath) return;
+      await message.channel.sendTyping();
+
+      try {
+        await fileResponse(owner as string, repo as string, filePath, embed);
+        message.reply({
+          embeds: [embed],
+        });
+      } catch (error) {
+        console.error(error);
+        await message.author.send({
+          embeds: [embed.setColor(0xD73A49).setDescription(`_Failed to fetch file ${filePath} from repository ${qrRepo}._`)],
+        });
+      }
+      break;
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -199,49 +329,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const [owner, repo] = repoName.split('/');
         if (!owner || !repo) responseEmbed.setDescription(`Invalid repository format: ${repoName}. Expected "owner/repo".`);
         else {
-          const { data } = await github.rest.repos.getContent({
-            owner, repo, path,
-          });
-
-          if (Array.isArray(data)) {
-            const typeKV = {
-              file: '📄',
-              dir: '📁',
-              submodule: '📤',
-              symlink: '⛓️',
-            };
-            let contents = data.sort((a, b) => {
-              if (a.type === b.type) return a.name.localeCompare(b.name);
-              if (a.type === 'dir') return -1;
-              if (b.type === 'dir') return 1;
-              return 0;
-            }).map(item => `${typeKV[item.type]} [${item.name}](${item.html_url})`).join('\n');
-            if (contents.length > 4096) contents = `Directory too big, +**${data.length}** amount of files`;
-            responseEmbed
-              .setColor(0x0B0399)
-              .setTitle(`Contents of \`${path}\`:`)
-              .setDescription(contents || '_No files found._');
-          } else if (data.type === 'file' && typeof data.content === 'string') {
-            const contents = Buffer.from(data.content, 'base64').toString('utf-8');
-            const extension = path.split('.').pop();
-            const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension as string);
-            const header = `[Download](${data.download_url}) - ${data.size} bytes \n\n`;
-            const description = `${header}${data.content
-              ? extension == 'md'
-                ? `${contents}`
-                : `\`\`\`${extension}\n${contents}\n\`\`\``
-              : isImage ? '' : `_File content is not available to display or empty._`
-            }`;
-
-            responseEmbed
-              .setTitle(`File: ${data.name}`)
-              .setURL(data.html_url)
-              .setDescription(description.length > 4096 ? '${header}_File content is too big to display._' : description)
-              .setColor(isImage ? 0xEED605 : 0xB6B6B6)
-            if (isImage) responseEmbed.setImage(data.download_url);
-          } else {
-            responseEmbed.setDescription('_File content is not available to display or not a regular file._');
-          }
+          await fileResponse(owner, repo, path, responseEmbed);
         }
       } catch (error) {
         console.error(error);
@@ -267,28 +355,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         break;
       }
       try {
-        const { data } = await github.rest.issues.get({
-          owner, repo, issue_number: prIssueNumber,
-        });
-
-        if (!data) {
-          responseEmbed.setDescription(`PR/Issue #${prIssueNumber} not found in repository ${repoName}.`);
-        } else {
-          responseEmbed
-            .setTitle(`#${data.number} ${data.title}`)
-            .setURL(data.html_url)
-            .setAuthor({
-              name: data.user?.login || '',
-              iconURL: data.user?.avatar_url,
-              url: data.user?.html_url,
-            })
-            .setColor(data.state === 'open' ? 0x28A745 : 0xB23AD7)
-            .setDescription(`${data.body || '_No description._'}\n**${data.state}** - **${data.comments}** comments - **${data.reactions?.total_count}** reactions`)
-            .addFields(
-              { name: "Created At", value: `${new Date(data.created_at).toLocaleDateString()}`, inline: true },
-              { name: "Updated At", value: `${new Date(data.updated_at).toLocaleDateString()}`, inline: true }
-            );
-        }
+        prIssueResponse(owner, repo, prIssueNumber, responseEmbed);
       } catch (error) {
         console.error(error);
         responseEmbed

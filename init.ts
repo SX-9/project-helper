@@ -16,10 +16,6 @@ try {
   console.log('Started refreshing application (/) commands.');
   await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [
     {
-      name: 'help',
-      description: 'Shows commands available in this server',
-    },
-    {
       name: 'ping',
       description: 'Replies with Pong!',
     },
@@ -37,7 +33,7 @@ try {
     },
     {
       name: 'set-quick-ref',
-      description: '(needs set-default-repo) Toggles shortcuts to reference: gh@USER, ##PR_NUMBER, //FILE_PATH',
+      description: '(needs set-default-repo) Toggles shortcuts to reference: ##PR_NUMBER, //FILE_PATH',
       options: [
        {
         type: 5,
@@ -133,9 +129,9 @@ try {
   ]});
 
   console.log('Creating database collections if they do not exist.');
-  try {
-    await db.dropCollection('server_config');
-  } catch {}
+  // try {
+  //   await db.dropCollection('server_config');
+  // } catch {}
   await db.createCollection('server_config', {
     validator: {
       $jsonSchema: {
