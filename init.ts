@@ -89,12 +89,6 @@ try {
           required: true,
         },
         {
-          type: 5,
-          name: 'show-contents',
-          description: 'Whether to show the contents of the file',
-          required: false,
-        },
-        {
           type: 3,
           name: 'repository',
           description: 'The repository in the format owner/repo',

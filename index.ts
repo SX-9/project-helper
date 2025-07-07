@@ -26,6 +26,7 @@ client.on(Events.ClientReady, async (readyClient) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
+  let repoName = '';
   const { options, guildId: serverId } = interaction;
   const responseEmbed = new EmbedBuilder()
     .setColor(0x24292E)
@@ -149,7 +150,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     case "repo":
       await interaction.deferReply();
 
-      let repoName = '';
       try {
         const serverSettings = await collection.findOne({ serverId });
         repoName = serverSettings?.defaultRepo || process.env?.DEFAULT_REPO || 'SX-9/project-helper';
@@ -177,6 +177,71 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
       break;
+    
+    case "file":
+      await interaction.deferReply();
+
+      try {
+        const serverSettings = await collection.findOne({ serverId });
+        repoName = serverSettings?.defaultRepo || process.env?.DEFAULT_REPO || 'SX-9/project-helper';
+      } catch (error) {
+        console.error(error);
+      }
+      if (options.getString('repository')) repoName = options.getString('repository', true);
+
+      try {
+        const path = options.getString('file-path', true);
+        const [owner, repo] = repoName.split('/');
+        if (!owner || !repo) responseEmbed.setDescription(`Invalid repository format: ${repoName}. Expected "owner/repo".`);
+        else {
+          const { data } = await github.rest.repos.getContent({
+            owner, repo, path,
+          });
+
+          if (Array.isArray(data)) {
+            const contents = data.sort((a, b) => {
+              if (a.type === b.type) return a.name.localeCompare(b.name);
+              if (a.type === 'dir') return -1;
+              if (b.type === 'dir') return 1;
+              return 0;
+            });
+            const typeKV = {
+              file: '📄',
+              dir: '📁',
+              submodule: '📤',
+              symlink: '⛓️',
+            };
+            responseEmbed
+              .setTitle(`Contents of \`${path}\`:`)
+              .setDescription(contents.map(item => `${typeKV[item.type]} [${item.name}](${item.html_url})`).join('\n') || '_No files found._');
+          } else if (data.type === 'file' && typeof data.content === 'string') {
+            const contents = Buffer.from(data.content, 'base64').toString('utf-8');
+            const extension = path.split('.').pop();
+            const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension as string);
+            const header = `[Download](${data.download_url}) - ${data.size} bytes \n\n`;
+            const description = `${header}${data.content
+              ? extension == 'md'
+                ? `${contents}`
+                : `\`\`\`${extension}\n${contents}\n\`\`\``
+              : isImage ? '' : `_File content is not available to display or empty._`
+            }`;
+
+            responseEmbed
+              .setTitle(`File: ${data.name}`)
+              .setURL(data.html_url)
+              .setDescription(description.length > 4096 ? '${header}_File content is too big to display._' : description)
+            if (isImage) responseEmbed.setImage(data.download_url);
+          } else {
+            responseEmbed.setDescription('_File content is not available to display or not a regular file._');
+          }
+        }
+      } catch (error) {
+        console.error(error);
+        return await interaction.editReply({
+          embeds: [responseEmbed.setDescription(`File not found in repository ${repoName}.`)],
+        });
+      }
+      break; 
   }
   
   await interaction.editReply({
