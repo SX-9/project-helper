@@ -355,7 +355,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         break;
       }
       try {
-        prIssueResponse(owner, repo, prIssueNumber, responseEmbed);
+        await prIssueResponse(owner, repo, prIssueNumber, responseEmbed);
       } catch (error) {
         console.error(error);
         responseEmbed
