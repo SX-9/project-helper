@@ -16,6 +16,9 @@ try {
   console.log('Started refreshing application (/) commands.');
   const commands = [
     new SlashCommandBuilder()
+      .setName('help')
+      .setDescription('Replies with usage instructions'),
+    new SlashCommandBuilder()
       .setName('ping')
       .setDescription('Replies with Pong!'),
     new SlashCommandBuilder()
