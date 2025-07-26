@@ -157,7 +157,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  let repoName = '';
+  let serverSettings, repoName, owner, repo;
   const { options, guildId: serverId } = interaction;
   const responseEmbed = new EmbedBuilder()
     .setColor(0x24292E)
@@ -177,10 +177,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
           embeds: [responseEmbed],
           flags: MessageFlags.Ephemeral,
         });
-      } else await interaction.deferReply();
+      }
 
       const defaultRepo = options.getString('repository', true);
+      [owner, repo] = defaultRepo.split('/');
+      if (!owner || !repo) {
+        responseEmbed.setDescription(`Invalid repository format: ${defaultRepo}. Expected "owner/repo".`);
+        return await interaction.reply({
+          embeds: [responseEmbed],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      
+      await interaction.deferReply(); 
       try {
+        const { data } = await github.rest.repos.get({ owner, repo });
+        if (!data) {
+          responseEmbed.setDescription(`Repository ${defaultRepo} not found on GitHub.`);
+          return await interaction.editReply({
+            embeds: [responseEmbed],
+          });
+        }
+
         await collection.updateOne(
           { serverId },
           { $set: { serverId, defaultRepo }, $setOnInsert: { quickRefEnabled: false } },
@@ -202,8 +220,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           embeds: [responseEmbed],
           flags: MessageFlags.Ephemeral,
         });
-      } else await interaction.deferReply();
+      }
 
+      const currentSettings = await collection.findOne({ serverId });
+      if (!currentSettings?.defaultRepo) {
+        responseEmbed.setDescription("You need to set a default repository first using `/set-default-repo`.");
+        return await interaction.reply({
+          embeds: [responseEmbed],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      await interaction.deferReply();
       const quickRefEnabled = options.getBoolean('enable', true);
       try {
         await collection.updateOne(
@@ -317,7 +345,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.deferReply();
 
       try {
-        const serverSettings = await collection.findOne({ serverId });
+        serverSettings = await collection.findOne({ serverId });
         repoName = serverSettings?.defaultRepo || process.env?.DEFAULT_REPO || 'SX-9/project-helper';
       } catch (error) {
         console.error(error);
@@ -330,6 +358,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!owner || !repo) responseEmbed.setDescription(`Invalid repository format: ${repoName}. Expected "owner/repo".`);
         else {
           await fileResponse(owner, repo, path, responseEmbed);
+          if (!serverSettings?.defaultRepo) interaction.followUp(
+            `Hint: You can set a default repository using \`/set-default-repo\` command.`
+          );
         }
       } catch (error) {
         console.error(error);
@@ -341,7 +372,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.deferReply();
 
       try {
-        const serverSettings = await collection.findOne({ serverId });
+        serverSettings = await collection.findOne({ serverId });
         repoName = serverSettings?.defaultRepo || process.env?.DEFAULT_REPO || 'SX-9/project-helper';
       } catch (error) {
         console.error(error);
@@ -349,13 +380,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (options.getString('repository')) repoName = options.getString('repository', true);
 
       const prIssueNumber = options.getInteger('pr-issue-number', true);
-      const [owner, repo] = repoName.split('/');
+      [owner, repo] = repoName.split('/');
       if (!owner || !repo) {
         responseEmbed.setDescription(`Invalid repository format: ${repoName}. Expected "owner/repo".`);
         break;
       }
       try {
         await prIssueResponse(owner, repo, prIssueNumber, responseEmbed);
+        if (!serverSettings?.defaultRepo) interaction.followUp(
+          `Hint: You can set a default repository using \`/set-default-repo\` command.`
+        );
       } catch (error) {
         console.error(error);
         responseEmbed
